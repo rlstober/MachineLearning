@@ -1,0 +1,200 @@
+---
+title: "Fitness"
+author: "Robert Stober"
+date: "Sunday, February 15, 2015"
+output: html_document
+---
+
+#Abstract
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases.
+
+
+```{r initialize, results='hide', warning=FALSE}
+#load required libraries
+library(caret)
+library(randomForest)
+set.seed=(112358)
+```
+
+
+# Data Provenance
+
+
+The training data for this project are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+testingSelect<-trainingSelect[,columnSelect]
+
+The test data are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+```{r getData}
+#download and read in data files, if they exist will overwrite by default
+urlTrain <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+fileTrain<-"./pml-training.csv"
+
+urlTest <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+fileTest<-"./pml-testing.csv"
+
+#download.file(urlTrain, destfile=fileTrain)
+#download.file(urlTest, destfile=fileTest)
+
+## set na stringsif value = NA or is blank, and trim whitespace
+# Use function to avoid copying code and ensure both datses treated the same.
+readData<- function(x){read.csv(x, na.strings=c("NA","","#DIV/0!"), strip.white=TRUE)}
+training<-readData(fileTrain)
+testing<-readData(fileTest)
+```
+
+
+# Exploratory Analysis
+
+The training set consists of 19622 observations and 159 features and one dependent variable, classe. The first 7 columns are data collection entries, consisting of the person and date when the data was collected. It is assumed that the individual nor the time of the experiment are relevant factors.
+
+Looking over the datasets, it became apparent that there were many features that were not being used in either the training or test set. In keeping with the goal of the project to accurately predict the test dataset, I further reduce the dimensionality of the dataset by including only those features which were present in the test set. If a feature does not exist in the testing set, then it cannot be effective in the model. This enabled me to remove all non-numeric factors.
+
+This resulted in 53 factors. I then applied principal component analysis - pca. I used the pca function at a 95% threshold. This results in a final model of 25 features.
+
+The classe or dependent variable has 5 values as per below:
+*Class A: Exactly according to the specification
+*Class B: Throwing the elbows to the front
+*Class C: Lifting the dumbbell only halfway
+*Class D: Lowering the dumbbell only halfway
+*Class E: Throwing the hips to the front
+
+
+
+```{r exploreData, results='hide'}
+# look at training, results not presented in html
+str(training)
+head(training)
+```
+
+```{r initialDimensions}
+dim(training)
+dim(testing)
+```
+
+##Feature Reduction
+
+```{r featureReduction}
+##remove data collection columns from test and train
+removeDCC<-function(x){subset(x,select=-c(X, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp, new_window, num_window))}
+trainingSelect<-removeDCC(training)
+testingSelect<-removeDCC(testing)
+
+```
+
+
+```{r removeDataCollectionDimensions}
+dim(trainingSelect)
+dim(testingSelect)
+```
+
+```{r removeNumericdimensions}
+#keep only numeric features that exist in testing dataset
+#Note the last column of test is the numeric problem_id 
+# and the last column of training is classe, the classification variable
+# this method keeps both
+
+columnSelect<-as.logical(sapply(testingSelect, is.numeric))
+sum(columnSelect)
+keepNumeric<-function(x,y){x<-x[,y]}
+trainingSelect<-keepNumeric(trainingSelect,columnSelect)
+testingSelect<-keepNumeric(testingSelect,columnSelect)
+
+```
+
+```{r finalDimensions}
+dim(testingSelect)
+dim(trainingSelect)
+```
+
+
+#Partition
+
+This step partitions the training data into a Training set used to build the model and a validation set which for cross-validation and determination of the out of sample error.
+
+
+```{r partitionData }
+##partiton training into validation
+inTrain <- createDataPartition(y=trainingSelect$classe, p=0.70, list=FALSE)
+trainingSet <- trainingSelect[inTrain,]
+validationSet <- trainingSelect[-inTrain,]
+
+
+```
+
+```{r partitonDimensions}
+dim(trainingSet)
+dim(validationSet)
+```
+
+
+#Preprocess and Train
+
+In this step we preprocess the data using PCA-principal component Analysis. The threshold parameter is set at 95% meaning that number of components chosen will explain 95% of the variance. The overall summary of the model and rank of variable importance is presented.
+
+```{r trainData}
+preProc <- preProcess(trainingSet[,-53],method="pca",thresh=.95)
+trainPC <- predict(preProc,trainingSet[,-53])
+modelFit<-randomForest(trainingSet$classe ~ .,data=trainPC, importance=TRUE)
+summary(modelFit)
+varImp(modelFit)
+
+```
+
+#Cross Validation
+We apply the same preprocessing to validation set and present the confusion matrix. The model has an accuracy of 0.9818 and a Kappa of 0.9766. Either (1 - accuracy) or (1- Kappa) can be used as a reasonable estimate of the expected out of sample error. Taking the lower value results in an estimate of 0.0234 or 2.3%.
+
+
+```{r}
+##prep validation
+valPC <- predict(preProc,validationSet[,-53])
+confusionMatrix(predict(modelFit,newdata=valPC[,-53]),validationSet$classe)
+```
+
+
+#Predictions
+
+We apply the same preprocessing to test set. Then make predictions and present the results.
+
+```{r predictTest}
+testPC <- predict(preProc,testingSelect[,-53])
+testResults<-(predict(modelFit,newdata=testPC[,-53]))
+testResults
+
+```
+
+#Create Files
+
+This step outputs test result files for submission to Coursera.
+
+```{r creatFile, results='hide'}
+
+#then you can load this function by copying and pasting it into R:
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+    }
+  }
+#then create a folder where you want the files to be written. Set that to be your working directory and run:
+
+pml_write_files(testResults)
+```
+
+#Results
+
+The predictions were correct in 19 out of 20 or 95% of the test cases. This 5% error is higher than the estimated 2.3%, but is not unreasonable considering the small number of cases being tested. It may also effect bias or over-fitting in the model.
+
+
+#Conclusions
+
+based on this study it appears that predicting the type of exercise performed, where type classifies if the exercise is done correctly, based on features collected via personal fitness devices is achievable with a high degree of accuracy. 
